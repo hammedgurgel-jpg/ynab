@@ -100,7 +100,8 @@ function Budgeter() {
   const [moving, setMoving] = useState(null);
   const [editingCatMeta, setEditingCatMeta] = useState(null);
   const [editingGroup, setEditingGroup] = useState(null);
-  const [editingGoal, setEditingGoal] = useState(null); // categoria para editar meta
+  const [editingGoal, setEditingGoal] = useState(null);
+  const [editingDebt, setEditingDebt] = useState(null); // conta de crédito para editar dívida
 
   // carregar do Supabase
   useEffect(() => {
@@ -157,9 +158,25 @@ function Budgeter() {
   const accBalanceNow = (a) => {
     const ins = data.transactions.filter((t) => t.accountId === a.id && t.type === "inflow").reduce((s, t) => s + t.amount, 0);
     const outs = data.transactions.filter((t) => t.accountId === a.id && t.type === "outflow").reduce((s, t) => s + t.amount, 0);
-    if (a.type === "credit") return a.initialBalance + ins - outs + payments(a.id, "9999-99");
+    if (a.type === "credit") {
+      // debtBalance: dívida total informada manualmente (negativa = deve)
+      // ponto de partida + compras lançadas - pagamentos realizados
+      const base = -(a.debtBalance || 0); // armazenado positivo, saldo é negativo
+      return base - outs + ins + payments(a.id, "9999-99");
+    }
     const pays = data.transactions.filter((t) => t.type === "payment" && t.fromCash === a.id).reduce((s, t) => s + t.amount, 0);
     return a.initialBalance + ins - outs - pays;
+  };
+  // dívida total atual do cartão (positiva = quanto deve)
+  const cardDebt = (a) => {
+    const bal = accBalanceNow(a);
+    return bal < 0 ? -bal : 0;
+  };
+  // quanto já está reservado no envelope de pagamento desse cartão
+  const cardReserved = (a) => {
+    const paycat = data.categories.find((c) => c.cardId === a.id);
+    if (!paycat) return 0;
+    return Math.max(0, available(paycat.id, month));
   };
 
   const cashM = cashAsOf(month);
@@ -368,16 +385,49 @@ function Budgeter() {
       <H>Contas</H>
       {data.accounts.map((a) => {
         const bal = accBalanceNow(a);
+        if (a.type === "credit") {
+          const debt = cardDebt(a);
+          const reserved = cardReserved(a);
+          const pct = debt > 0 ? clamp(reserved / debt, 0, 1) : 1;
+          return (
+            <div key={a.id} style={{ background: C.white, border: `1px solid ${C.line}`, borderRadius: 20, padding: "16px 18px", marginBottom: 12, boxShadow: "0 1px 3px rgba(20,40,10,.04)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: debt > 0 ? 14 : 0 }}>
+                <div style={{ width: 44, height: 44, borderRadius: 13, background: "#FDE7EC", display: "grid", placeItems: "center", color: C.red }}>
+                  <CreditCard size={21} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontFamily: F, fontSize: 15, fontWeight: 700, color: C.ink }}>{a.name}</div>
+                  <div style={{ fontFamily: F, fontSize: 12, color: C.muted }}>{debt > 0.005 ? `total devido: ${fmt(debt)}` : "quitado ✓"}</div>
+                </div>
+                <button onClick={() => setEditingDebt(a)} style={{ background: C.page, border: `1px solid ${C.line}`, borderRadius: 10, padding: "6px 10px", fontFamily: F, fontSize: 12, fontWeight: 700, color: C.body, cursor: "pointer" }}>Atualizar</button>
+              </div>
+              {debt > 0.005 && (
+                <>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontFamily: F, fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                    <span style={{ color: C.body }}>Reservado para pagar</span>
+                    <span style={{ color: reserved >= debt ? C.green : C.amber }}>{fmt(reserved)} de {fmt(debt)}</span>
+                  </div>
+                  <div style={{ background: C.track, borderRadius: 999, height: 8, overflow: "hidden", marginBottom: 8 }}>
+                    <div style={{ background: pct >= 1 ? C.green : C.amber, height: "100%", width: `${Math.round(pct * 100)}%`, borderRadius: 999, transition: "width .4s ease" }} />
+                  </div>
+                  <div style={{ fontFamily: F, fontSize: 11, color: C.muted }}>
+                    {pct >= 1 ? "✓ dívida totalmente coberta pelos envelopes" : `faltam ${fmt(debt - reserved)} para cobrir a dívida total`}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        }
         return (
           <div key={a.id} style={{ background: C.white, border: `1px solid ${C.line}`, borderRadius: 20, padding: "16px 18px", marginBottom: 12, display: "flex", alignItems: "center", gap: 14, boxShadow: "0 1px 3px rgba(20,40,10,.04)" }}>
-            <div style={{ width: 44, height: 44, borderRadius: 13, background: a.type === "credit" ? "#FDE7EC" : C.mint, display: "grid", placeItems: "center", color: a.type === "credit" ? C.red : C.green }}>
-              {a.type === "credit" ? <CreditCard size={21} /> : <Banknote size={21} />}
+            <div style={{ width: 44, height: 44, borderRadius: 13, background: C.mint, display: "grid", placeItems: "center", color: C.green }}>
+              <Banknote size={21} />
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontFamily: F, fontSize: 15, fontWeight: 700, color: C.ink }}>{a.name}</div>
-              <div style={{ fontFamily: F, fontSize: 12, color: C.muted }}>{a.type === "credit" ? (bal < -0.005 ? `fatura: ${fmt(-bal)}` : "fatura quitada") : "Conta / dinheiro"}</div>
+              <div style={{ fontFamily: F, fontSize: 12, color: C.muted }}>Conta / dinheiro</div>
             </div>
-            <div style={{ fontFamily: F, fontSize: 18, fontWeight: 800, color: bal < -0.005 ? C.red : C.ink }}>{fmt(bal)}</div>
+            <div style={{ fontFamily: F, fontSize: 18, fontWeight: 800, color: bal < 0 ? C.red : C.ink }}>{fmt(bal)}</div>
           </div>
         );
       })}
@@ -467,6 +517,7 @@ function Budgeter() {
       {editingCatMeta && <EditCategoryModal cat={editingCatMeta} data={data} update={update} close={() => setEditingCatMeta(null)} />}
       {editingGroup && <EditGroupModal group={editingGroup} data={data} update={update} close={() => setEditingGroup(null)} />}
       {editingGoal !== null && <GoalModal cat={editingGoal} goal={data.goals[editingGoal?.id]} update={update} close={() => setEditingGoal(null)} />}
+      {editingDebt && <DebtModal account={editingDebt} update={update} close={() => setEditingDebt(null)} />}
       {editingCat && <AssignModal cat={editingCat} monthName={monthLabel(month)}
         assigned={assignedM(editingCat.id, month)} carryIn={carryIn(editingCat.id, month)} activity={activityM(editingCat.id, month)} month={month}
         onMove={() => { const id = editingCat.id; setEditingCat(null); setMoving(id); }}
@@ -696,6 +747,26 @@ function MoveModal({ month, monthName, initialFrom, options, availOf, update, cl
 }
 
 // ---- METAS ----
+function DebtModal({ account, update, close }) {
+  const [debt, setDebt] = useState(String(account.debtBalance || ""));
+  const save = () => {
+    const val = parseFloat(String(debt).replace(",", ".")) || 0;
+    update((d) => ({ ...d, accounts: d.accounts.map((a) => a.id === account.id ? { ...a, debtBalance: val } : a) }));
+    close();
+  };
+  return (
+    <Shell title={`Saldo devedor — ${account.name}`} close={close}>
+      <div style={{ background: C.mint, borderRadius: 14, padding: "12px 14px", marginBottom: 16, fontFamily: F, fontSize: 13, color: C.greenDark, fontWeight: 600 }}>
+        Consulte o total devido no app do banco — inclua fatura atual + todas as parcelas futuras em aberto. Atualize sempre que pagar ou surgir nova parcela.
+      </div>
+      <Field label="Total devido agora (R$)">
+        <input autoFocus style={inputStyle} inputMode="decimal" value={debt} onChange={(e) => setDebt(e.target.value)} placeholder="0,00" />
+      </Field>
+      <SaveBtn onClick={save}>Salvar</SaveBtn>
+    </Shell>
+  );
+}
+
 const GOAL_TYPES = [
   { k: "target", label: "Valor alvo", icon: <CalendarDays size={16} />, desc: "Juntar R$ X até uma data" },
   { k: "monthly", label: "Gasto mensal", icon: <TrendingUp size={16} />, desc: "Ter R$ X disponível todo mês" },
