@@ -156,21 +156,26 @@ function Budgeter() {
     return s + a.initialBalance + ins - outs - pays;
   }, 0);
   const accBalanceNow = (a) => {
+    if (a.type === "credit") {
+      if (a.debtBalance != null && a.debtBalance > 0) {
+        // Usuário informou a dívida total manualmente — é a fonte da verdade.
+        // Só ajustamos com pagamentos e gastos registrados APÓS a data de atualização.
+        const since = a.debtUpdatedAt || "9999-12-31";
+        const paysAfter = data.transactions
+          .filter((t) => t.type === "payment" && t.cardId === a.id && t.date > since)
+          .reduce((s, t) => s + t.amount, 0);
+        const outsAfter = data.transactions
+          .filter((t) => t.type === "outflow" && t.accountId === a.id && t.date > since)
+          .reduce((s, t) => s + t.amount, 0);
+        return -(a.debtBalance) + paysAfter - outsAfter;
+      }
+      // Sem saldo informado: calcula pelas transações normalmente
+      const outs = data.transactions.filter((t) => t.type === "outflow" && t.accountId === a.id).reduce((s, t) => s + t.amount, 0);
+      const pays = data.transactions.filter((t) => t.type === "payment" && t.cardId === a.id).reduce((s, t) => s + t.amount, 0);
+      return -outs + pays;
+    }
     const ins = data.transactions.filter((t) => t.accountId === a.id && t.type === "inflow").reduce((s, t) => s + t.amount, 0);
     const outs = data.transactions.filter((t) => t.accountId === a.id && t.type === "outflow").reduce((s, t) => s + t.amount, 0);
-    if (a.type === "credit") {
-      // Se o usuário informou o saldo devedor manualmente, ele é a fonte da verdade.
-      // Pagamentos realizados depois da última atualização reduzem a dívida.
-      // Novos gastos lançados depois da última atualização aumentam a dívida.
-      const base = -(a.debtBalance || 0);
-      const paysAfter = data.transactions
-        .filter((t) => t.type === "payment" && t.cardId === a.id && t.date >= (a.debtUpdatedAt || "0000-00-00"))
-        .reduce((s, t) => s + t.amount, 0);
-      const outsAfter = data.transactions
-        .filter((t) => t.type === "outflow" && t.accountId === a.id && t.date >= (a.debtUpdatedAt || "0000-00-00"))
-        .reduce((s, t) => s + t.amount, 0);
-      return base + paysAfter - outsAfter;
-    }
     const pays = data.transactions.filter((t) => t.type === "payment" && t.fromCash === a.id).reduce((s, t) => s + t.amount, 0);
     return a.initialBalance + ins - outs - pays;
   };
@@ -758,7 +763,7 @@ function DebtModal({ account, update, close }) {
   const [debt, setDebt] = useState(String(account.debtBalance || ""));
   const save = () => {
     const val = parseFloat(String(debt).replace(",", ".")) || 0;
-    update((d) => ({ ...d, accounts: d.accounts.map((a) => a.id === account.id ? { ...a, debtBalance: val, debtUpdatedAt: todayISO() } : a) }));
+    update((d) => ({ ...d, accounts: d.accounts.map((a) => a.id === account.id ? { ...a, debtBalance: val, debtUpdatedAt: new Date().toISOString().slice(0, 10) } : a) }));
     close();
   };
   return (
