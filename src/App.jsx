@@ -3,6 +3,7 @@ import {
   Wallet, PiggyBank, Plus, ArrowDownLeft, ArrowUpRight, X,
   Receipt, CreditCard, Trash2, Check, Banknote, BarChart3,
   ChevronLeft, ChevronRight, Lightbulb, LogOut, CornerDownRight, ArrowLeftRight, Pencil,
+  Target, CalendarDays, TrendingUp, ShieldCheck, Flag,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import { loadBudget, saveBudget } from "./api";
@@ -45,14 +46,14 @@ const seed = () => {
       mk(g2, "Mercado"), mk(g2, "Restaurantes"), mk(g2, "Delivery"),
       mk(g3, "Combustível"), mk(g3, "Lazer"), mk(g3, "Reserva"),
     ],
-    assigned: {}, transactions: [],
+    assigned: {}, transactions: [], goals: {},
   };
 };
 const migrate = (d) => {
   if (!d || !d.accounts) return seed();
   const cm = curMonth(); const a = {};
   for (const [cat, v] of Object.entries(d.assigned || {})) a[cat] = typeof v === "number" ? (v ? { [cm]: v } : {}) : v;
-  return { ...d, assigned: a };
+  return { ...d, assigned: a, goals: d.goals || {} };
 };
 
 function Ring({ size = 60, stroke = 6, pct = 0, color = C.green, children }) {
@@ -97,8 +98,9 @@ function Budgeter() {
   const [modal, setModal] = useState(null);
   const [editingCat, setEditingCat] = useState(null);
   const [moving, setMoving] = useState(null);
-  const [editingCatMeta, setEditingCatMeta] = useState(null); // editar nome/grupo/apagar
-  const [editingGroup, setEditingGroup] = useState(null); // editar nome/apagar grupo
+  const [editingCatMeta, setEditingCatMeta] = useState(null);
+  const [editingGroup, setEditingGroup] = useState(null);
+  const [editingGoal, setEditingGoal] = useState(null); // categoria para editar meta
 
   // carregar do Supabase
   useEffect(() => {
@@ -166,6 +168,41 @@ function Budgeter() {
   const totalSpentM = data.categories.filter((c) => !c.cardId).reduce((s, c) => s + Math.max(0, spentM(c.id, month)), 0);
   const rta = cashM - totalAvail;
   const creditAccounts = data.accounts.filter((a) => a.type === "credit");
+
+  // ---------- metas ----------
+  // Retorna { needed, progress, onTrack, label } para o mês atual
+  const goalStatus = (catId, ym) => {
+    const g = data.goals[catId];
+    if (!g) return null;
+    const av = available(catId, ym);
+    const sp = Math.max(0, spentM(catId, ym));
+
+    if (g.type === "target") {
+      // Juntar R$ g.amount até g.targetDate
+      const [ty, tm] = g.targetDate.split("-").map(Number);
+      const [cy, cm] = ym.split("-").map(Number);
+      const monthsLeft = Math.max(1, (ty - cy) * 12 + (tm - cm) + 1);
+      const saved = av; // disponível acumulado = o que foi poupado
+      const needed = Math.max(0, (g.amount - saved) / monthsLeft);
+      const progress = Math.min(1, saved / g.amount);
+      const onTrack = assignedM(catId, ym) >= needed - 0.005;
+      return { needed, progress, saved, total: g.amount, onTrack, label: `${fmt(saved)} de ${fmt(g.amount)}`, monthsLeft };
+    }
+    if (g.type === "monthly") {
+      // Ter R$ g.amount disponível todo mês
+      const needed = Math.max(0, g.amount - carryIn(catId, ym));
+      const progress = Math.min(1, av / g.amount);
+      const onTrack = av >= g.amount - 0.005;
+      return { needed, progress, onTrack, label: `${fmt(av)} de ${fmt(g.amount)}` };
+    }
+    if (g.type === "balance") {
+      // Manter pelo menos R$ g.amount no envelope
+      const progress = Math.min(1, av / g.amount);
+      const onTrack = av >= g.amount - 0.005;
+      return { needed: Math.max(0, g.amount - av), progress, onTrack, label: `${fmt(av)} de ${fmt(g.amount)}` };
+    }
+    return null;
+  };
 
   const MonthNav = () => (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 4 }}>
@@ -258,6 +295,11 @@ function Budgeter() {
                               <CornerDownRight size={12} />{fmt(ci)} veio do mês anterior
                             </div>
                           )}
+                          {(() => { const gs = goalStatus(c.id, month); if (!gs) return null; return (
+                            <div style={{ display: "inline-flex", alignItems: "center", gap: 3, fontFamily: F, fontSize: 11, fontWeight: 600, color: gs.onTrack ? C.green : C.amber, marginTop: 3 }}>
+                              <Flag size={11} />{gs.onTrack ? "meta no caminho" : `faltam ${fmt(gs.needed)}`}
+                            </div>
+                          ); })()}
                         </div>
                         <button onClick={(e) => { e.stopPropagation(); setEditingCatMeta(c); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, display: "grid", placeItems: "center" }}>
                           <Pencil size={14} color={C.muted} />
@@ -396,6 +438,7 @@ function Budgeter() {
       </header>
       <main style={{ padding: "6px 18px" }}>
         {tab === "budget" && <Budget />}
+        {tab === "goals" && <GoalsTab data={data} month={month} goalStatus={goalStatus} setEditingGoal={setEditingGoal} />}
         {tab === "summary" && <Summary />}
         {tab === "accounts" && <Accounts />}
         {tab === "tx" && <Transactions />}
@@ -406,6 +449,7 @@ function Budgeter() {
       <nav style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 460, background: C.white, borderTop: `1px solid ${C.line}`, display: "flex", padding: "12px 0 16px", zIndex: 15 }}>
         {[
           { k: "budget", icon: <PiggyBank size={22} />, l: "Orçamento" },
+          { k: "goals", icon: <Target size={22} />, l: "Metas" },
           { k: "summary", icon: <BarChart3 size={22} />, l: "Resumo" },
           { k: "accounts", icon: <Wallet size={22} />, l: "Contas" },
           { k: "tx", icon: <Receipt size={22} />, l: "Transações" },
@@ -422,6 +466,7 @@ function Budgeter() {
       {modal === "group" && <GroupModal update={update} close={() => setModal(null)} />}
       {editingCatMeta && <EditCategoryModal cat={editingCatMeta} data={data} update={update} close={() => setEditingCatMeta(null)} />}
       {editingGroup && <EditGroupModal group={editingGroup} data={data} update={update} close={() => setEditingGroup(null)} />}
+      {editingGoal !== null && <GoalModal cat={editingGoal} goal={data.goals[editingGoal?.id]} update={update} close={() => setEditingGoal(null)} />}
       {editingCat && <AssignModal cat={editingCat} monthName={monthLabel(month)}
         assigned={assignedM(editingCat.id, month)} carryIn={carryIn(editingCat.id, month)} activity={activityM(editingCat.id, month)} month={month}
         onMove={() => { const id = editingCat.id; setEditingCat(null); setMoving(id); }}
@@ -646,6 +691,131 @@ function MoveModal({ month, monthName, initialFrom, options, availOf, update, cl
         <PreviewRow id={toId} after={toAvail + X} />
       </div>
       <SaveBtn onClick={save}>Mover</SaveBtn>
+    </Shell>
+  );
+}
+
+// ---- METAS ----
+const GOAL_TYPES = [
+  { k: "target", label: "Valor alvo", icon: <CalendarDays size={16} />, desc: "Juntar R$ X até uma data" },
+  { k: "monthly", label: "Gasto mensal", icon: <TrendingUp size={16} />, desc: "Ter R$ X disponível todo mês" },
+  { k: "balance", label: "Saldo mínimo", icon: <ShieldCheck size={16} />, desc: "Manter pelo menos R$ X no envelope" },
+];
+
+function GoalsTab({ data, month, goalStatus, setEditingGoal }) {
+  const cats = data.categories.filter((c) => !c.cardId);
+  const withGoal = cats.filter((c) => data.goals[c.id]);
+  const withoutGoal = cats.filter((c) => !data.goals[c.id]);
+  const done = withGoal.filter((c) => goalStatus(c.id, month)?.onTrack).length;
+
+  return (
+    <div>
+      <H>Metas</H>
+      {withGoal.length > 0 && (
+        <div style={{ background: C.mint, borderRadius: 20, padding: "14px 18px", marginBottom: 18, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontFamily: F, fontSize: 13, fontWeight: 600, color: C.body }}>No caminho este mês</div>
+            <div style={{ fontFamily: F, fontSize: 22, fontWeight: 800, color: C.ink }}>{done} de {withGoal.length}</div>
+          </div>
+          <Ring size={56} stroke={7} pct={withGoal.length > 0 ? done / withGoal.length : 0} color={C.green}>
+            <span style={{ fontFamily: F, fontSize: 13, fontWeight: 800, color: C.ink }}>{Math.round(done / Math.max(1, withGoal.length) * 100)}%</span>
+          </Ring>
+        </div>
+      )}
+
+      {withGoal.map((c) => {
+        const g = data.goals[c.id];
+        const gs = goalStatus(c.id, month);
+        const typeInfo = GOAL_TYPES.find((t) => t.k === g.type);
+        const barColor = gs?.onTrack ? C.green : C.amber;
+        return (
+          <div key={c.id} onClick={() => setEditingGoal(c)} style={{ background: C.white, border: `1px solid ${C.line}`, borderRadius: 20, padding: "16px 18px", marginBottom: 12, cursor: "pointer", boxShadow: "0 1px 3px rgba(20,40,10,.04)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+              <div>
+                <div style={{ fontFamily: F, fontSize: 15, fontWeight: 700, color: C.ink }}>{c.name}</div>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 4, fontFamily: F, fontSize: 11, fontWeight: 600, color: C.body, marginTop: 3, background: C.page, borderRadius: 999, padding: "2px 8px" }}>
+                  {typeInfo?.icon}{typeInfo?.label}
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontFamily: F, fontSize: 14, fontWeight: 800, color: gs?.onTrack ? C.green : C.amber }}>{gs?.onTrack ? "✓ no caminho" : `faltam ${fmt(gs?.needed)}`}</div>
+                <div style={{ fontFamily: F, fontSize: 12, color: C.muted, marginTop: 2 }}>{gs?.label}</div>
+              </div>
+            </div>
+            <div style={{ background: C.track, borderRadius: 999, height: 8, overflow: "hidden" }}>
+              <div style={{ background: barColor, height: "100%", width: `${Math.round((gs?.progress || 0) * 100)}%`, borderRadius: 999, transition: "width .4s ease" }} />
+            </div>
+            {g.type === "target" && g.targetDate && (
+              <div style={{ fontFamily: F, fontSize: 11, color: C.muted, marginTop: 6 }}>
+                até {new Date(g.targetDate + "-01").toLocaleDateString("pt-BR", { month: "long", year: "numeric" })} · {gs?.monthsLeft} {gs?.monthsLeft === 1 ? "mês" : "meses"} restantes
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {withoutGoal.length > 0 && (
+        <>
+          <div style={{ fontFamily: F, fontSize: 13, fontWeight: 700, color: C.muted, margin: "18px 0 10px 4px" }}>SEM META</div>
+          {withoutGoal.map((c) => (
+            <div key={c.id} onClick={() => setEditingGoal(c)} style={{ background: C.white, border: `1.5px dashed ${C.line}`, borderRadius: 20, padding: "14px 18px", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+              <div style={{ fontFamily: F, fontSize: 15, fontWeight: 600, color: C.ink }}>{c.name}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: F, fontSize: 13, fontWeight: 700, color: C.green }}>
+                <Plus size={14} /> Definir meta
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+function GoalModal({ cat, goal, update, close }) {
+  const [type, setType] = useState(goal?.type || "target");
+  const [amount, setAmount] = useState(String(goal?.amount || ""));
+  const [targetDate, setTargetDate] = useState(goal?.targetDate || "");
+
+  const save = () => {
+    const amt = parseFloat(String(amount).replace(",", "."));
+    if (!amt) return;
+    const g = { type, amount: amt };
+    if (type === "target") { if (!targetDate) return; g.targetDate = targetDate; }
+    update((d) => ({ ...d, goals: { ...d.goals, [cat.id]: g } }));
+    close();
+  };
+  const remove = () => {
+    update((d) => { const goals = { ...d.goals }; delete goals[cat.id]; return { ...d, goals }; });
+    close();
+  };
+
+  return (
+    <Shell title={`Meta — ${cat.name}`} close={close}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+        {GOAL_TYPES.map((t) => (
+          <button key={t.k} onClick={() => setType(t.k)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 14, border: `1.5px solid ${type === t.k ? C.green : C.line}`, background: type === t.k ? C.mint : C.white, cursor: "pointer", textAlign: "left" }}>
+            <div style={{ color: C.green }}>{t.icon}</div>
+            <div>
+              <div style={{ fontFamily: F, fontSize: 14, fontWeight: 700, color: C.ink }}>{t.label}</div>
+              <div style={{ fontFamily: F, fontSize: 12, color: C.muted }}>{t.desc}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+      <Field label={type === "target" ? "Valor total a poupar (R$)" : type === "monthly" ? "Valor mensal desejado (R$)" : "Saldo mínimo (R$)"}>
+        <input style={inputStyle} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" />
+      </Field>
+      {type === "target" && (
+        <Field label="Data alvo (mês/ano)">
+          <input type="month" style={inputStyle} value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />
+        </Field>
+      )}
+      <SaveBtn onClick={save}>Salvar meta</SaveBtn>
+      {goal && (
+        <button onClick={remove} style={{ width: "100%", marginTop: 10, background: "transparent", border: "none", color: C.red, fontFamily: F, fontSize: 14, fontWeight: 700, cursor: "pointer", padding: "10px", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+          <Trash2 size={15} /> Remover meta
+        </button>
+      )}
     </Shell>
   );
 }
