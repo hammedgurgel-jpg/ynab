@@ -97,6 +97,8 @@ function Budgeter() {
   const [modal, setModal] = useState(null);
   const [editingCat, setEditingCat] = useState(null);
   const [moving, setMoving] = useState(null);
+  const [editingCatMeta, setEditingCatMeta] = useState(null); // editar nome/grupo/apagar
+  const [editingGroup, setEditingGroup] = useState(null); // editar nome/apagar grupo
 
   // carregar do Supabase
   useEffect(() => {
@@ -210,7 +212,13 @@ function Budgeter() {
             return (
               <div key={g.id} style={{ marginBottom: 16 }}>
                 <div style={{ fontFamily: F, fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 10, paddingLeft: 4, display: "flex", alignItems: "center", gap: 7 }}>
-                  {g.isPayment && <CreditCard size={16} color={C.green} />}{g.name}
+                  {g.isPayment && <CreditCard size={16} color={C.green} />}
+                  <span style={{ flex: 1 }}>{g.name}</span>
+                  {!g.isPayment && (
+                    <button onClick={(e) => { e.stopPropagation(); setEditingGroup(g); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, display: "grid", placeItems: "center" }}>
+                      <Pencil size={14} color={C.muted} />
+                    </button>
+                  )}
                 </div>
                 <div style={{ background: C.white, borderRadius: 20, border: `1px solid ${C.line}`, overflow: "hidden", boxShadow: "0 1px 3px rgba(20,40,10,.04)" }}>
                   {cats.length === 0 && <div style={{ padding: 16, color: C.muted, fontSize: 14, fontFamily: F }}>Sem categorias.</div>}
@@ -251,6 +259,9 @@ function Budgeter() {
                             </div>
                           )}
                         </div>
+                        <button onClick={(e) => { e.stopPropagation(); setEditingCatMeta(c); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, display: "grid", placeItems: "center" }}>
+                          <Pencil size={14} color={C.muted} />
+                        </button>
                         <div style={{ fontFamily: F, fontSize: 15, fontWeight: 800, color: tcol, minWidth: 78, textAlign: "right" }}>{fmt(av)}</div>
                       </div>
                     );
@@ -409,6 +420,8 @@ function Budgeter() {
       {modal === "account" && <AccountModal update={update} close={() => setModal(null)} />}
       {modal === "category" && <CategoryModal data={data} update={update} close={() => setModal(null)} />}
       {modal === "group" && <GroupModal update={update} close={() => setModal(null)} />}
+      {editingCatMeta && <EditCategoryModal cat={editingCatMeta} data={data} update={update} close={() => setEditingCatMeta(null)} />}
+      {editingGroup && <EditGroupModal group={editingGroup} data={data} update={update} close={() => setEditingGroup(null)} />}
       {editingCat && <AssignModal cat={editingCat} monthName={monthLabel(month)}
         assigned={assignedM(editingCat.id, month)} carryIn={carryIn(editingCat.id, month)} activity={activityM(editingCat.id, month)} month={month}
         onMove={() => { const id = editingCat.id; setEditingCat(null); setMoving(id); }}
@@ -633,6 +646,91 @@ function MoveModal({ month, monthName, initialFrom, options, availOf, update, cl
         <PreviewRow id={toId} after={toAvail + X} />
       </div>
       <SaveBtn onClick={save}>Mover</SaveBtn>
+    </Shell>
+  );
+}
+
+function EditCategoryModal({ cat, data, update, close }) {
+  const realGroups = data.groups.filter((g) => !g.isPayment);
+  const [name, setName] = useState(cat.name);
+  const [groupId, setGroupId] = useState(cat.groupId);
+  const [confirming, setConfirming] = useState(false);
+
+  const save = () => {
+    if (!name.trim()) return;
+    update((d) => ({ ...d, categories: d.categories.map((c) => c.id === cat.id ? { ...c, name: name.trim(), groupId } : c) }));
+    close();
+  };
+  const remove = () => {
+    update((d) => {
+      const assigned = { ...d.assigned };
+      delete assigned[cat.id];
+      return { ...d, categories: d.categories.filter((c) => c.id !== cat.id), assigned };
+    });
+    close();
+  };
+
+  return (
+    <Shell title="Editar categoria" close={close}>
+      <Field label="Nome"><input autoFocus style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} /></Field>
+      <Field label="Grupo">
+        <select style={inputStyle} value={groupId} onChange={(e) => setGroupId(e.target.value)}>
+          {realGroups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+        </select>
+      </Field>
+      <SaveBtn onClick={save}>Salvar alterações</SaveBtn>
+      {!confirming
+        ? <button onClick={() => setConfirming(true)} style={{ width: "100%", marginTop: 10, background: "transparent", border: "none", color: C.red, fontFamily: F, fontSize: 14, fontWeight: 700, cursor: "pointer", padding: "10px", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+            <Trash2 size={15} /> Apagar categoria
+          </button>
+        : <div style={{ marginTop: 10, background: "#FDE7EC", borderRadius: 14, padding: "14px 16px" }}>
+            <div style={{ fontFamily: F, fontSize: 13, fontWeight: 600, color: C.red, marginBottom: 12 }}>Apagar "{cat.name}"? Os lançamentos vinculados ficam sem categoria, mas não são apagados.</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setConfirming(false)} style={{ flex: 1, padding: "10px", borderRadius: 12, border: `1px solid ${C.line}`, background: C.white, fontFamily: F, fontWeight: 700, fontSize: 14, cursor: "pointer", color: C.body }}>Cancelar</button>
+              <button onClick={remove} style={{ flex: 1, padding: "10px", borderRadius: 12, border: "none", background: C.red, color: "#fff", fontFamily: F, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>Confirmar</button>
+            </div>
+          </div>
+      }
+    </Shell>
+  );
+}
+
+function EditGroupModal({ group, data, update, close }) {
+  const [name, setName] = useState(group.name);
+  const [confirming, setConfirming] = useState(false);
+  const hasCats = data.categories.some((c) => c.groupId === group.id);
+
+  const save = () => {
+    if (!name.trim()) return;
+    update((d) => ({ ...d, groups: d.groups.map((g) => g.id === group.id ? { ...g, name: name.trim() } : g) }));
+    close();
+  };
+  const remove = () => {
+    update((d) => ({ ...d, groups: d.groups.filter((g) => g.id !== group.id) }));
+    close();
+  };
+
+  return (
+    <Shell title="Editar grupo" close={close}>
+      <Field label="Nome"><input autoFocus style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} /></Field>
+      <SaveBtn onClick={save}>Salvar alterações</SaveBtn>
+      {!hasCats && !confirming &&
+        <button onClick={() => setConfirming(true)} style={{ width: "100%", marginTop: 10, background: "transparent", border: "none", color: C.red, fontFamily: F, fontSize: 14, fontWeight: 700, cursor: "pointer", padding: "10px", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+          <Trash2 size={15} /> Apagar grupo
+        </button>
+      }
+      {hasCats &&
+        <div style={{ marginTop: 10, fontFamily: F, fontSize: 12, color: C.muted, textAlign: "center" }}>Mova ou apague as categorias antes de apagar o grupo.</div>
+      }
+      {confirming &&
+        <div style={{ marginTop: 10, background: "#FDE7EC", borderRadius: 14, padding: "14px 16px" }}>
+          <div style={{ fontFamily: F, fontSize: 13, fontWeight: 600, color: C.red, marginBottom: 12 }}>Apagar o grupo "{group.name}"?</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => setConfirming(false)} style={{ flex: 1, padding: "10px", borderRadius: 12, border: `1px solid ${C.line}`, background: C.white, fontFamily: F, fontWeight: 700, fontSize: 14, cursor: "pointer", color: C.body }}>Cancelar</button>
+            <button onClick={remove} style={{ flex: 1, padding: "10px", borderRadius: 12, border: "none", background: C.red, color: "#fff", fontFamily: F, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>Confirmar</button>
+          </div>
+        </div>
+      }
     </Shell>
   );
 }
