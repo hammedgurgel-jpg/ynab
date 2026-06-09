@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import {
   Wallet, PiggyBank, Plus, ArrowDownLeft, ArrowUpRight, X,
   Receipt, CreditCard, Trash2, Check, Banknote, BarChart3,
-  ChevronLeft, ChevronRight, Lightbulb, LogOut, CornerDownRight, ArrowLeftRight,
+  ChevronLeft, ChevronRight, Lightbulb, LogOut, CornerDownRight, ArrowLeftRight, Pencil,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import { loadBudget, saveBudget } from "./api";
