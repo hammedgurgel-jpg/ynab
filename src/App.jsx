@@ -139,13 +139,23 @@ function Budgeter() {
 
   const available = (id, ym) => {
     const c = catById(id);
-    if (c?.cardId) return cumAssigned(id, ym) + creditSpend(c.cardId, ym) - payments(c.cardId, ym);
+    if (c?.cardId) {
+      const card = data.accounts.find((a) => a.id === c.cardId);
+      // Se o cartão tem saldo devedor manual, o envelope é puro acumulado de atribuições
+      if (card?.debtBalance != null && card.debtBalance > 0) return cumAssigned(id, ym);
+      return cumAssigned(id, ym) + creditSpend(c.cardId, ym) - payments(c.cardId, ym);
+    }
     return cumAssigned(id, ym) - cumSpent(id, ym);
   };
   const carryIn = (id, ym) => available(id, shiftMonth(ym, -1));
   const activityM = (id, ym) => {
     const c = catById(id);
-    if (c?.cardId) return creditSpendM(c.cardId, ym) - paymentsM(c.cardId, ym);
+    if (c?.cardId) {
+      const card = data.accounts.find((a) => a.id === c.cardId);
+      // Com saldo devedor manual, não mostramos activity — o saldo devedor já engloba tudo
+      if (card?.debtBalance != null && card.debtBalance > 0) return 0;
+      return creditSpendM(c.cardId, ym) - paymentsM(c.cardId, ym);
+    }
     return -spentM(id, ym);
   };
 
