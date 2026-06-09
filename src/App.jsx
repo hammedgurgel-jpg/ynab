@@ -159,10 +159,17 @@ function Budgeter() {
     const ins = data.transactions.filter((t) => t.accountId === a.id && t.type === "inflow").reduce((s, t) => s + t.amount, 0);
     const outs = data.transactions.filter((t) => t.accountId === a.id && t.type === "outflow").reduce((s, t) => s + t.amount, 0);
     if (a.type === "credit") {
-      // debtBalance: dívida total informada manualmente (negativa = deve)
-      // ponto de partida + compras lançadas - pagamentos realizados
-      const base = -(a.debtBalance || 0); // armazenado positivo, saldo é negativo
-      return base - outs + ins + payments(a.id, "9999-99");
+      // Se o usuário informou o saldo devedor manualmente, ele é a fonte da verdade.
+      // Pagamentos realizados depois da última atualização reduzem a dívida.
+      // Novos gastos lançados depois da última atualização aumentam a dívida.
+      const base = -(a.debtBalance || 0);
+      const paysAfter = data.transactions
+        .filter((t) => t.type === "payment" && t.cardId === a.id && t.date >= (a.debtUpdatedAt || "0000-00-00"))
+        .reduce((s, t) => s + t.amount, 0);
+      const outsAfter = data.transactions
+        .filter((t) => t.type === "outflow" && t.accountId === a.id && t.date >= (a.debtUpdatedAt || "0000-00-00"))
+        .reduce((s, t) => s + t.amount, 0);
+      return base + paysAfter - outsAfter;
     }
     const pays = data.transactions.filter((t) => t.type === "payment" && t.fromCash === a.id).reduce((s, t) => s + t.amount, 0);
     return a.initialBalance + ins - outs - pays;
@@ -751,7 +758,7 @@ function DebtModal({ account, update, close }) {
   const [debt, setDebt] = useState(String(account.debtBalance || ""));
   const save = () => {
     const val = parseFloat(String(debt).replace(",", ".")) || 0;
-    update((d) => ({ ...d, accounts: d.accounts.map((a) => a.id === account.id ? { ...a, debtBalance: val } : a) }));
+    update((d) => ({ ...d, accounts: d.accounts.map((a) => a.id === account.id ? { ...a, debtBalance: val, debtUpdatedAt: todayISO() } : a) }));
     close();
   };
   return (
